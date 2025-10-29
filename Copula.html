@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bivariate Probability Density Function (Normal Distribution) | Gaussian Copula</title>
+  <script src="https://cdn.plot.ly/plotly-2.24.1.min.js"></script>
+  <style>
+    body{font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; margin:18px;}
+    .grid{display:grid;grid-template-columns:320px 1fr;gap:18px;}
+    .card{padding:12px;border-radius:10px;border:1px solid #e6e9ed;background:#fff}
+    label{display:block;margin-top:8px;font-size:13px}
+    input[type=number], input[type=range], select, input[type=text]{width:100%;padding:6px;margin-top:6px;border-radius:6px;border:1px solid #d6dbe2}
+    input[type=range]{accent-color:#888} /* grey slider */
+    button{margin-top:12px;padding:8px 12px;border-radius:8px;border:0;background:#0066ff;color:#fff;cursor:pointer}
+    .small{font-size:13px;color:#444}
+    #plot{height:520px}
+    .row{display:flex;gap:8px;align-items:center}
+    .muted{color:#666;font-size:13px}
+  </style>
+</head>
+<body>
+  <h2>Bivariate Probability Density Function (Normal Distribution) | Gaussian Copula</h2>
+  <p class="muted">Enter probability-of-default (PD) for each asset and the correlation. The tool computes the threshold implied by PD and shows the joint CDF P(X &lt; threshold1, Y &lt; threshold2) using a numeric integral and a Monte‑Carlo estimate. The joint PDF is shown as an interactive 3D surface. Means and standard deviations are assumed 0 and 1 by default.</p>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Asset parameters</h3>
+      <label>Probability of default PD1 (0..1)
+        <input id="pd1" type="number" value="0.05" step="0.001" min="0" max="1">
+      </label>
+
+      <label>Probability of default PD2 (0..1)
+        <input id="pd2" type="number" value="0.05" step="0.001" min="0" max="1">
+      </label>
+
+      <hr>
+
+      <label>Correlation ρ (between -0.999 and 0.999) <span id="rhoValue" style="font-weight:bold;margin-left:6px">0.30</span>
+        <input id="rho" type="range" value="0.3" step="0.01" min="-0.999" max="0.999">
+      </label>
+
+      <label>Monte‑Carlo samples
+        <input id="mcSamples" type="text" value="20,000">
+      </label>
+
+      <label>Surface grid size (max 120 — larger = slower)
+        <input id="gridSize" type="number" value="80" step="1" min="20" max="120">
+      </label>
+
+      <div class="row">
+        <button id="compute">Compute & Plot</button>
+        <button id="reset">Reset</button>
+      </div>
+
+      <div id="results" style="margin-top:12px" class="small"></div>
+    </div>
+
+    <div>
+      <div id="plot" class="card"></div>
+      <div id="cdfDetails" class="card" style="margin-top:12px"></div>
+    </div>
+  </div>
+
+<script>
+function erf(x){const sign=x<0?-1:1;x=Math.abs(x);const a1=0.254829592,a2=-0.284496736,a3=1.421413741,a4=-1.453152027,a5=1.061405429;const p=0.3275911;const t=1/(1+p*x);return sign*(1-((((a5*t+a4)*t+a3)*t+a2)*t+a1)*t*Math.exp(-x*x));}
+function normCDF(x){return 0.5*(1+erf(x/Math.SQRT2));}
+function normPDF(x){return Math.exp(-0.5*x*x)/Math.sqrt(2*Math.PI);}
+function bivariatePDF(x,y,rho){const denom=2*Math.PI*Math.sqrt(1-rho*rho);const exponent=-1/(2*(1-rho*rho))*(x*x-2*rho*x*y+y*y);return Math.exp(exponent)/denom;}
+function bivariateCDF(a,b,rho){const denom=Math.sqrt(1-rho*rho);function integrand(t){return normPDF(t)*normCDF((b-rho*t)/denom);}return adaptiveSimpson(integrand,-10,a,1e-8,20);}
+function adaptiveSimpson(f,a,b,eps,maxRec){const sim=(f,a,b)=>{const c=(a+b)/2;return(f(a)+4*f(c)+f(b))*(b-a)/6;};function rec(f,a,b,eps,whole,depth){const c=(a+b)/2;const left=sim(f,a,c);const right=sim(f,c,b);const delta=left+right-whole;if(depth<=0||Math.abs(delta)<15*eps)return left+right+delta/15;return rec(f,a,c,eps/2,left,depth-1)+rec(f,c,b,eps/2,right,depth-1);}return rec(f,a,b,eps,sim(f,a,b),maxRec);}
+function monteCarloJointCDF(th1,th2,rho,N){const L=[[1,0],[rho,Math.sqrt(1-rho*rho)]];let count=0;for(let i=0;i<N;i++){const z1=gauss(),z2=gauss(),x=L[0][0]*z1+L[0][1]*z2,y=L[1][0]*z1+L[1][1]*z2;if(x<th1&&y<th2)count++;}const p=count/N,se=Math.sqrt(p*(1-p)/N);return {p,se};}
+function gauss(){let u=0,v=0;while(u===0)u=Math.random();while(v===0)v=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+function formatNumber(x){return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g,",");}
+
+const pd1El=document.getElementById('pd1');
+const pd2El=document.getElementById('pd2');
+const rhoEl=document.getElementById('rho');
+const rhoValEl=document.getElementById('rhoValue');
+const computeBtn=document.getElementById('compute');
+const resultsEl=document.getElementById('results');
+const plotDiv=document.getElementById('plot');
+const cdfDetails=document.getElementById('cdfDetails');
+const mcSamplesEl=document.getElementById('mcSamples');
+const gridSizeEl=document.getElementById('gridSize');
+const resetBtn=document.getElementById('reset');
+
+// Show slider value dynamically
+rhoEl.addEventListener('input',()=>{rhoValEl.textContent=parseFloat(rhoEl.value).toFixed(2);});
+
+computeBtn.addEventListener('click',()=>{
+  try {
+    computeBtn.disabled=true;
+    computeBtn.textContent='Computing...';
+    resultsEl.textContent='';
+    cdfDetails.innerHTML='';
+
+    const pd1=Math.min(Math.max(parseFloat(pd1El.value),0),1);
+    const pd2=Math.min(Math.max(parseFloat(pd2El.value),0),1);
+    const rho=parseFloat(rhoEl.value);
+    const N=Math.max(1000,parseInt(mcSamplesEl.value.replace(/,/g,'')));
+    const gridSize=Math.min(120,Math.max(20,parseInt(gridSizeEl.value)));
+
+    const th1=invNorm(pd1);
+    const th2=invNorm(pd2);
+
+    resultsEl.innerHTML='<div><strong>Thresholds:</strong> T1='+th1.toFixed(6)+', T2='+th2.toFixed(6)+'</div>';
+
+    const analytic=bivariateCDF(th1,th2,rho);
+    const mc=monteCarloJointCDF(th1,th2,rho,N);
+
+    cdfDetails.innerHTML='<div class="small"><strong>Joint CDF estimates</strong></div>'+ 
+      '<div class="small">Analytic: <strong>'+analytic.toPrecision(8)+'</strong></div>'+ 
+      '<div class="small">Monte Carlo (N='+formatNumber(N)+'): <strong>'+mc.p.toPrecision(8)+'</strong> ± '+mc.se.toExponential(2)+'</div>';
+
+    const nSigma=4,xMin=-nSigma,xMax=nSigma,yMin=-nSigma,yMax=nSigma,nx=gridSize,ny=gridSize;
+    const xs=[],ys=[],z=[];
+    for(let i=0;i<nx;i++) xs[i]=xMin+(xMax-xMin)*(i/(nx-1));
+    for(let j=0;j<ny;j++){ys[j]=yMin+(yMax-yMin)*(j/(ny-1));z[j]=[];for(let i=0;i<nx;i++) z[j][i]=bivariatePDF(xs[i],ys[j],rho);}
+
+    const surface={x:xs,y:ys,z:z,type:'surface',contours:{z:{show:true,usecolormap:true,highlightcolor:'#42a5f5',project:{z:true}}},hovertemplate:'x=%{x:.4f}<br>y=%{y:.4f}<br>pdf=%{z:.6e}<extra></extra>'};
+    const thZ=bivariatePDF(th1,th2,rho);
+    const marker={x:[th1],y:[th2],z:[thZ],mode:'markers+text',type:'scatter3d',marker:{size:4,symbol:'diamond',line:{width:1}},text:['thresholds'],textposition:'top center'};
+    const layout={title:'Bivariate PDF (3D surface)',autosize:true,scene:{camera:{eye:{x:1.6,y:1.6,z:0.8}}},margin:{l:0,r:0,t:40,b:0}};
+
+    Plotly.newPlot(plotDiv,[surface,marker],layout,{responsive:true});
+    computeBtn.disabled=false;
+    computeBtn.textContent='Compute & Plot';
+  } catch(e){
+    alert('Error during computation: '+e.message);
+    computeBtn.disabled=false;
+    computeBtn.textContent='Compute & Plot';
+  }
+});
+
+resetBtn.addEventListener('click',()=>{
+  pd1El.value=0.05;
+  pd2El.value=0.05;
+  rhoEl.value=0.3;
+  rhoValEl.textContent='0.30';
+  mcSamplesEl.value='20,000';
+  gridSizeEl.value=80;
+  resultsEl.textContent='';
+  cdfDetails.innerHTML='';
+  Plotly.purge(plotDiv);
+});
+
+function invNorm(p){if(p<=0)return -1e9;if(p>=1)return 1e9;const a=[2.50662823884,-18.61500062529,41.39119773534,-25.44106049637];const b=[-8.47351093090,23.08336743743,-21.06224101826,3.13082909833];const c=[0.3374754822726147,0.9761690190917186,0.1607979714918209,0.0276438810333863,0.0038405729373609,0.0003951896511919,0.0000321767881768,0.0000002888167364,0.0000003960315187];const x=p-0.5;if(Math.abs(x)<0.42){const r=x*x;const num=a[0]+a[1]*r+a[2]*r*r+a[3]*r*r*r;const den=1+b[0]*r+b[1]*r*r+b[2]*r*r*r+b[3]*r*r*r*r;return x*num/den;}let r=p;if(x>0) r=1-p;r=Math.log(-Math.log(r));let val=c[0]+c[1]*r+c[2]*r*r+c[3]*r*r*r+c[4]*r*r*r*r+c[5]*Math.pow(r,5)+c[6]*Math.pow(r,6)+c[7]*Math.pow(r,7)+c[8]*Math.pow(r,8);return (x<0)?-val:val;}
+
+</script>
+    <footer style="margin:40px auto 20px;max-width:920px;text-align:center;font-size:12px;color:#777;font-style:italic;">
+    © Quantik.org. All rights reserved. This model, including its code and associated intellectual property, is the exclusive property of Quantik.org and may not be copied, distributed, or replicated without prior written consent. Use of this calculator implies acceptance of these terms.
+  </footer>
+</body>
+</html>
+</body>
+</html>
